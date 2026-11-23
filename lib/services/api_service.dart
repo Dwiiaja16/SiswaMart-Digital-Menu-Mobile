@@ -3,6 +3,8 @@ import 'package:http/http.dart' as http;
 import '../core/constants.dart';
 import '../models/category_model.dart';
 import '../models/product_model.dart';
+import '../models/seller_model.dart';
+import 'auth_session_manager.dart';
 
 class ApiService {
   static const Map<String, String> headers = {
@@ -183,4 +185,384 @@ class ApiService {
       );
 
   Future<ProductDetailModel> product(int id) => getProductDetail(id);
+
+  // ==========================================
+  // SELLER / PENJUAL API ENDPOINTS (STAGE 1)
+  // ==========================================
+
+  /// POST /api/seller/login
+  /// Autentikasi Penjual & perolehan Bearer Token
+  Future<SellerLoginResult> loginSeller({
+    required String login,
+    required String password,
+    bool persistSession = true,
+  }) async {
+    try {
+      final uri = Uri.parse('$sellerApiBaseUrl/login');
+      final response = await _client
+          .post(
+            uri,
+            headers: headers,
+            body: jsonEncode({
+              'login': login.trim(),
+              'password': password,
+            }),
+          )
+          .timeout(const Duration(seconds: 15));
+
+      final decoded = jsonDecode(response.body);
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        if (decoded is Map<String, dynamic> && decoded.containsKey('data')) {
+          final result = SellerLoginResult.fromJson(
+            decoded['data'] as Map<String, dynamic>,
+          );
+          if (persistSession) {
+            await AuthSessionManager.saveSession(
+              token: result.token,
+              user: result.user,
+              stand: result.stand,
+            );
+          }
+          return result;
+        }
+        throw Exception('Format respon server tidak valid.');
+      } else {
+        final message = (decoded is Map<String, dynamic> && decoded['message'] != null)
+            ? decoded['message'].toString()
+            : 'Login gagal (${response.statusCode})';
+        throw Exception(message);
+      }
+    } catch (e) {
+      if (e is Exception) rethrow;
+      throw Exception('Gagal terhubung ke server login: $e');
+    }
+  }
+
+  /// POST /api/seller/logout
+  /// Menghapus token autentikasi di server & membersihkan sesi lokal
+  Future<void> logoutSeller({String? token}) async {
+    final effectiveToken = token ?? await AuthSessionManager.getToken();
+    try {
+      if (effectiveToken != null && effectiveToken.isNotEmpty) {
+        final uri = Uri.parse('$sellerApiBaseUrl/logout');
+        await _client.post(
+          uri,
+          headers: {
+            ...headers,
+            'Authorization': 'Bearer $effectiveToken',
+          },
+        ).timeout(const Duration(seconds: 10));
+      }
+    } catch (_) {
+      // Abaikan error jaringan saat logout agar sesi lokal tetap bersih
+    } finally {
+      await AuthSessionManager.clearSession();
+    }
+  }
+
+  /// GET /api/seller/me
+  /// Mengambil profil autentikasi dan data stand terkini dari server
+  Future<Map<String, dynamic>> getSellerMe({String? token}) async {
+    final effectiveToken = token ?? await AuthSessionManager.getToken();
+    if (effectiveToken == null || effectiveToken.isEmpty) {
+      throw Exception('Sesi telah berakhir. Silakan login kembali.');
+    }
+
+    try {
+      final uri = Uri.parse('$sellerApiBaseUrl/me');
+      final response = await _client.get(
+        uri,
+        headers: {
+          ...headers,
+          'Authorization': 'Bearer $effectiveToken',
+        },
+      ).timeout(const Duration(seconds: 15));
+
+      final decoded = jsonDecode(response.body);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        if (decoded is Map<String, dynamic> && decoded.containsKey('data')) {
+          final data = decoded['data'] as Map<String, dynamic>;
+          if (data['stand'] != null) {
+            final stand = SellerStand.fromJson(data['stand'] as Map<String, dynamic>);
+            await AuthSessionManager.updateStand(stand);
+          }
+          return data;
+        }
+        return decoded as Map<String, dynamic>;
+      } else {
+        final message = decoded is Map<String, dynamic> && decoded['message'] != null
+            ? decoded['message'].toString()
+            : 'Gagal memuat profil (${response.statusCode})';
+        throw Exception(message);
+      }
+    } catch (e) {
+      if (e is Exception) rethrow;
+      throw Exception('Gagal mengambil profil penjual: $e');
+    }
+  }
+
+  /// GET /api/seller/dashboard
+  /// Statistik ringkasan produk & stand penjual
+  Future<SellerDashboardStats> getSellerDashboard({String? token}) async {
+    final effectiveToken = token ?? await AuthSessionManager.getToken();
+    if (effectiveToken == null || effectiveToken.isEmpty) {
+      throw Exception('Sesi telah berakhir. Silakan login kembali.');
+    }
+
+    try {
+      final uri = Uri.parse('$sellerApiBaseUrl/dashboard');
+      final response = await _client.get(
+        uri,
+        headers: {
+          ...headers,
+          'Authorization': 'Bearer $effectiveToken',
+        },
+      ).timeout(const Duration(seconds: 15));
+
+      final decoded = jsonDecode(response.body);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        if (decoded is Map<String, dynamic> &&
+            decoded.containsKey('data') &&
+            decoded['data'] is Map<String, dynamic> &&
+            decoded['data']['statistik'] != null) {
+          return SellerDashboardStats.fromJson(
+            decoded['data']['statistik'] as Map<String, dynamic>,
+          );
+        }
+        throw Exception('Data statistik tidak valid.');
+      } else {
+        final message = decoded is Map<String, dynamic> && decoded['message'] != null
+            ? decoded['message'].toString()
+            : 'Gagal memuat dashboard stand (${response.statusCode})';
+        throw Exception(message);
+      }
+    } catch (e) {
+      if (e is Exception) rethrow;
+      throw Exception('Gagal memuat dashboard stand: $e');
+    }
+  }
+
+  /// PATCH /api/seller/stand/status
+  /// Buka / tutup stand penjual ('buka' | 'tutup')
+  Future<String> updateStandStatus({
+    required String status,
+    String? token,
+  }) async {
+    final effectiveToken = token ?? await AuthSessionManager.getToken();
+    if (effectiveToken == null || effectiveToken.isEmpty) {
+      throw Exception('Sesi telah berakhir. Silakan login kembali.');
+    }
+
+    try {
+      final uri = Uri.parse('$sellerApiBaseUrl/stand/status');
+      final response = await _client
+          .patch(
+            uri,
+            headers: {
+              ...headers,
+              'Authorization': 'Bearer $effectiveToken',
+            },
+            body: jsonEncode({'status': status.toLowerCase()}),
+          )
+          .timeout(const Duration(seconds: 15));
+
+      final decoded = jsonDecode(response.body);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final normalized = status.toLowerCase();
+        await AuthSessionManager.updateStandStatus(normalized);
+        return normalized;
+      } else {
+        final message = decoded is Map<String, dynamic> && decoded['message'] != null
+            ? decoded['message'].toString()
+            : 'Gagal mengubah status stand (${response.statusCode})';
+        throw Exception(message);
+      }
+    } catch (e) {
+      if (e is Exception) rethrow;
+      throw Exception('Gagal menghubungi server untuk ubah status: $e');
+    }
+  }
+
+  // ==========================================
+  // SELLER PRODUCT CRUD ENDPOINTS (STAGE 2)
+  // ==========================================
+
+  Map<String, String> _authHeader(String token) => {
+        'Accept': 'application/json',
+        'Authorization': 'Bearer $token',
+      };
+
+  /// GET /api/seller/products
+  Future<List<Map<String, dynamic>>> getSellerProducts({
+    String? search,
+    String? token,
+  }) async {
+    final effectiveToken = token ?? await AuthSessionManager.getToken();
+    if (effectiveToken == null || effectiveToken.isEmpty) {
+      throw Exception('Sesi telah berakhir. Silakan login kembali.');
+    }
+    try {
+      var baseUri = Uri.parse('$sellerApiBaseUrl/products');
+      if (search != null && search.trim().isNotEmpty) {
+        baseUri = baseUri.replace(queryParameters: {'search': search.trim()});
+      }
+      final response = await _client
+          .get(baseUri, headers: _authHeader(effectiveToken))
+          .timeout(const Duration(seconds: 15));
+      final decoded = jsonDecode(response.body);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final raw = decoded is Map && decoded.containsKey('data')
+            ? decoded['data']
+            : decoded;
+        if (raw is List) {
+          return raw.cast<Map<String, dynamic>>();
+        }
+        return [];
+      }
+      final msg = decoded is Map && decoded['message'] != null
+          ? decoded['message'].toString()
+          : 'Gagal memuat produk (${response.statusCode})';
+      throw Exception(msg);
+    } catch (e) {
+      if (e is Exception) rethrow;
+      throw Exception('Gagal memuat produk penjual: $e');
+    }
+  }
+
+  /// PATCH /api/seller/products/{id}/stock
+  Future<void> updateSellerProductStock({
+    required int productId,
+    required String statusStok,
+    String? token,
+  }) async {
+    final effectiveToken = token ?? await AuthSessionManager.getToken();
+    if (effectiveToken == null || effectiveToken.isEmpty) {
+      throw Exception('Sesi telah berakhir. Silakan login kembali.');
+    }
+    try {
+      final uri = Uri.parse('$sellerApiBaseUrl/products/$productId/stock');
+      final response = await _client
+          .patch(
+            uri,
+            headers: {
+              ..._authHeader(effectiveToken),
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode({'status_stok': statusStok}),
+          )
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) return;
+      final decoded = jsonDecode(response.body);
+      final msg = decoded is Map && decoded['message'] != null
+          ? decoded['message'].toString()
+          : 'Gagal mengubah stok (${response.statusCode})';
+      throw Exception(msg);
+    } catch (e) {
+      if (e is Exception) rethrow;
+      throw Exception('Gagal mengubah stok: $e');
+    }
+  }
+
+  /// DELETE /api/seller/products/{id}
+  Future<void> deleteSellerProduct({
+    required int productId,
+    String? token,
+  }) async {
+    final effectiveToken = token ?? await AuthSessionManager.getToken();
+    if (effectiveToken == null || effectiveToken.isEmpty) {
+      throw Exception('Sesi telah berakhir. Silakan login kembali.');
+    }
+    try {
+      final uri = Uri.parse('$sellerApiBaseUrl/products/$productId');
+      final response = await _client
+          .delete(uri, headers: _authHeader(effectiveToken))
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) return;
+      final decoded = jsonDecode(response.body);
+      final msg = decoded is Map && decoded['message'] != null
+          ? decoded['message'].toString()
+          : 'Gagal menghapus produk (${response.statusCode})';
+      throw Exception(msg);
+    } catch (e) {
+      if (e is Exception) rethrow;
+      throw Exception('Gagal menghapus produk: $e');
+    }
+  }
+
+  /// POST /api/seller/products  (tambah, multipart/form-data)
+  /// POST /api/seller/products/{id}  dengan field _method=PUT (edit)
+  Future<Map<String, dynamic>> upsertSellerProduct({
+    required Map<String, String> fields,
+    String? imagePath,
+    int? productId,
+    String? token,
+  }) async {
+    final effectiveToken = token ?? await AuthSessionManager.getToken();
+    if (effectiveToken == null || effectiveToken.isEmpty) {
+      throw Exception('Sesi telah berakhir. Silakan login kembali.');
+    }
+    try {
+      final endpoint = productId != null
+          ? '$sellerApiBaseUrl/products/$productId'
+          : '$sellerApiBaseUrl/products';
+      final uri = Uri.parse(endpoint);
+      final request = http.MultipartRequest('POST', uri)
+        ..headers['Authorization'] = 'Bearer $effectiveToken'
+        ..headers['Accept'] = 'application/json';
+      if (productId != null) {
+        request.fields['_method'] = 'PUT';
+      }
+      fields.forEach((k, v) => request.fields[k] = v);
+      if (imagePath != null && imagePath.isNotEmpty) {
+        request.files.add(await http.MultipartFile.fromPath('foto', imagePath));
+      }
+      final streamed = await request.send().timeout(const Duration(seconds: 30));
+      final response = await http.Response.fromStream(streamed);
+      final decoded = jsonDecode(response.body);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return decoded is Map<String, dynamic> ? decoded : {'status': 'success'};
+      }
+      String msg = 'Gagal menyimpan produk (${response.statusCode})';
+      if (decoded is Map && decoded['message'] != null) {
+        msg = decoded['message'].toString();
+      } else if (decoded is Map && decoded['errors'] != null) {
+        final errors = decoded['errors'] as Map;
+        msg = errors.values.first is List
+            ? (errors.values.first as List).first.toString()
+            : errors.values.first.toString();
+      }
+      throw Exception(msg);
+    } catch (e) {
+      if (e is Exception) rethrow;
+      throw Exception('Gagal menyimpan produk: $e');
+    }
+  }
+
+  /// GET /api/seller/categories  (untuk form)
+  Future<List<Map<String, dynamic>>> getSellerCategories({
+    String? token,
+  }) async {
+    final effectiveToken = token ?? await AuthSessionManager.getToken();
+    if (effectiveToken == null || effectiveToken.isEmpty) {
+      throw Exception('Sesi telah berakhir. Silakan login kembali.');
+    }
+    try {
+      final uri = Uri.parse('$apiBaseUrl/categories');
+      final response = await _client
+          .get(uri, headers: _authHeader(effectiveToken))
+          .timeout(const Duration(seconds: 15));
+      final decoded = jsonDecode(response.body);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final raw = decoded is Map && decoded.containsKey('data')
+            ? decoded['data']
+            : decoded;
+        if (raw is List) return raw.cast<Map<String, dynamic>>();
+        return [];
+      }
+      return [];
+    } catch (_) {
+      return [];
+    }
+  }
 }

@@ -9,11 +9,13 @@ import 'product_detail_screen.dart';
 class CatalogScreen extends StatefulWidget {
   final String? initialSearch;
   final int? initialKategoriId;
+  final VoidCallback? onNavigateToAccount;
 
   const CatalogScreen({
     super.key,
     this.initialSearch,
     this.initialKategoriId,
+    this.onNavigateToAccount,
   });
 
   @override
@@ -651,6 +653,36 @@ class _CatalogScreenState extends State<CatalogScreen> {
                                   ),
                                 ),
                             ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        GestureDetector(
+                          onTap: () {
+                            if (widget.onNavigateToAccount != null) {
+                              widget.onNavigateToAccount!();
+                            }
+                          },
+                          child: Container(
+                            width: 46,
+                            height: 46,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                  color: AppColors.border, width: 2),
+                              boxShadow: const [
+                                BoxShadow(
+                                  color: AppColors.border,
+                                  offset: Offset(2.5, 2.5),
+                                  blurRadius: 0,
+                                ),
+                              ],
+                            ),
+                            child: const Icon(
+                              Icons.person_rounded,
+                              size: 20,
+                              color: AppColors.border,
+                            ),
                           ),
                         ),
                       ],

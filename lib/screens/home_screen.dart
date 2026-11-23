@@ -7,10 +7,12 @@ import 'product_detail_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   final void Function({String? search, int? categoryId}) onNavigateToCatalog;
+  final VoidCallback? onNavigateToAccount;
 
   const HomeScreen({
     super.key,
     required this.onNavigateToCatalog,
+    this.onNavigateToAccount,
   });
 
   @override
@@ -152,8 +154,12 @@ class _HomeScreenState extends State<HomeScreen> {
           backgroundColor: Colors.white,
           onRefresh: _loadInitialData,
           child: ListView(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
             children: [
+              // 0. Top Bar SiswaMart & Tombol Akses Portal Penjual
+              _buildTopBar(),
+
+              const SizedBox(height: 12),
 
               // 1. Hero Card Mobile-Native
               _buildEditorialHero(),
@@ -189,6 +195,69 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildTopBar() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        RichText(
+          text: const TextSpan(
+            text: 'SISWA',
+            style: TextStyle(
+              fontFamily: 'Plus Jakarta Sans',
+              fontSize: 22,
+              fontWeight: FontWeight.w900,
+              color: AppColors.border,
+              letterSpacing: -0.5,
+            ),
+            children: [
+              TextSpan(
+                text: 'MART',
+                style: TextStyle(color: AppColors.primary),
+              ),
+            ],
+          ),
+        ),
+        GestureDetector(
+          onTap: () {
+            if (widget.onNavigateToAccount != null) {
+              widget.onNavigateToAccount!();
+            }
+          },
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.border, width: 1.8),
+              boxShadow: const [
+                BoxShadow(
+                  color: AppColors.border,
+                  offset: Offset(2, 2),
+                  blurRadius: 0,
+                ),
+              ],
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: const [
+                Icon(Icons.storefront_rounded, size: 16, color: AppColors.primary),
+                SizedBox(width: 5),
+                Text(
+                  'Portal Penjual',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                    color: AppColors.border,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 
